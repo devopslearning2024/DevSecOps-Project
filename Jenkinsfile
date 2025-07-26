@@ -2,8 +2,8 @@
 pipeline{
     agent any
     tools{
-        jdk 'jdk17'
-        nodejs 'node16'
+        jdk 'jdk'
+        nodejs 'node'
     }
     environment {
         SCANNER_HOME=tool 'sonar-scanner'
@@ -16,7 +16,7 @@ pipeline{
         }
         stage('Checkout from Git'){
             steps{
-                git branch: 'main', url: 'https://github.com/N4si/DevSecOps-Project.git'
+                git branch: 'main', url: 'https://github.com/devopslearning2024/DevSecOps-Project.git'
             }
         }
         stage("Sonarqube Analysis "){
