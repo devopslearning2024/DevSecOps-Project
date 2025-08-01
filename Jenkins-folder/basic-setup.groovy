@@ -1,44 +1,3 @@
-#!/bin/bash
-set -e
-
-echo "=== Installing Java, Jenkins, Docker, SonarQube, Trivy ==="
-sudo apt update -y
-sudo apt install -y openjdk-17-jdk openjdk-17-jre unzip curl gnupg lsb-release apt-transport-https wget docker.io
-
-sudo usermod -aG docker jenkins
-sudo usermod -aG docker ubuntu
-sudo chmod 777 /var/run/docker.sock
-sudo systemctl restart docker
-
-# Install OWASP Dependency-Check
-cd /opt
-sudo mkdir -p owasp-dc && cd owasp-dc
-wget https://github.com/jeremylong/DependencyCheck/releases/download/v8.4.0/dependency-check-8.4.0-release.zip
-unzip dependency-check-8.4.0-release.zip
-
-# --- Jenkins Installation ---
-curl -fsSL https://pkg.jenkins.io/debian/jenkins.io-2023.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
-echo deb [signed-by=/usr/share/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian binary/ | sudo tee /etc/apt/sources.list.d/jenkins.list > /dev/null
-sudo apt-get update -y
-sudo apt-get install jenkins -y
-
-
-# Copy SonarQube
-docker run -d --name sonar -p 9000:9000 sonarqube:lts-community
-
-# Trivy
-wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee /etc/apt/sources.list.d/trivy.list
-sudo apt update
-sudo apt install trivy -y
-
-echo "=== Installation Complete. Jenkins Groovy config not applied yet. Run: sudo /opt/jenkins-bootstrap/run-jenkins-groovy.sh ==="
-
-# Ensure required directories exist
-sudo mkdir -p /opt/jenkins-bootstrap
-sudo mkdir -p /home/ubuntu/run
-
-sudo bash -c "cat << 'EOF' > /opt/jenkins-bootstrap/basic-setup.groovy
 import jenkins.model.*
 import hudson.security.*
 import jenkins.install.InstallState
@@ -64,34 +23,6 @@ if (hudsonRealm.getAllUsers().size() == 0) {
     instance.setSecurityRealm(hudsonRealm)
 }
 instance.setInstallState(InstallState.INITIAL_SETUP_COMPLETED)
-
-// ---- INSTALL PLUGINS ----
-def pluginParameter = [
-    'git',
-    'temurin',
-    'sonar',
-    'nodejs',
-    'docker-plugin',
-    'docker-commons',
-    'docker-workflow',
-    'docker-api',
-    'docker-build-step',
-    'dependency-check-jenkins-plugin',
-    'terraform',
-    'aws-credentials',
-    'pipeline-aws',
-    'prometheus'
-]
-def pm = instance.getPluginManager()
-def uc = instance.getUpdateCenter()
-pluginParameter.each {
-    if (!pm.getPlugin(it)) {
-        def plugin = uc.getPlugin(it)
-        if (plugin) {
-            plugin.deploy()
-        }
-    }
-}
 instance.save()
 
 // ---- ADD CREDENTIALS ----
@@ -126,7 +57,7 @@ def awsCreds = new AWSCredentialsImpl(
 )
 credentials_store.addCredentials(Domain.global(), awsCreds)
 
-// 4. SonarQube Token (Secret Text placeholder, replace manually after first run)
+// 4. SonarQube Token (Secret Text)
 def sonarToken = new StringCredentialsImpl(
     CredentialsScope.GLOBAL,
     "sonar-token",
@@ -143,13 +74,13 @@ def jdkInstall = new JDK("jdk", "/usr/lib/jvm/java-17-openjdk-amd64")
 jdkDesc.setInstallations(jdkInstall)
 jdkDesc.save()
 
-// SonarQube Scanner Installation (auto-install default version)
+// SonarQube Scanner Installation
 def sonarRunnerDesc = Jenkins.instance.getDescriptorByType(SonarRunnerInstallation.DescriptorImpl.class)
 def sonarInstall = new SonarRunnerInstallation("sonar-scanner", "", [new hudson.plugins.sonar.SonarRunnerInstaller(null)])
 sonarRunnerDesc.setInstallations(sonarInstall)
 sonarRunnerDesc.save()
 
-// NodeJS Installation (auto-install default version)
+// NodeJS Installation
 def nodejsDesc = Jenkins.instance.getDescriptorByType(NodeJSInstallation.DescriptorImpl.class)
 def nodejsInstall = new NodeJSInstallation("nodejs", "", [new NodeJSInstaller(null, "", false)])
 nodejsDesc.setInstallations(nodejsInstall)
@@ -166,7 +97,7 @@ def sonarConfig = Jenkins.instance.getDescriptorByType(hudson.plugins.sonar.Sona
 def sonarServer = new SonarInstallation(
     "sonar-server",
     "http://44.213.89.155:9000/",
-    "sonar-token", // references the credentials ID above
+    "sonar-token", // Credential ID
     "",
     "",
     null,
@@ -174,38 +105,3 @@ def sonarServer = new SonarInstallation(
 )
 sonarConfig.setInstallations(sonarServer)
 sonarConfig.save()
-EOF"
-
-sudo bash -c "cat << 'EOF' > /home/ubuntu/run/run-jenkins-groovy.sh
-#!/bin/bash
-set -e
-
-echo "=== Applying Jenkins Groovy Config ==="
-sudo mkdir -p /var/lib/jenkins/init.groovy.d
-sudo cp /opt/jenkins-bootstrap/basic-setup.groovy /var/lib/jenkins/init.groovy.d/
-sudo chown -R jenkins:jenkins /var/lib/jenkins/init.groovy.d
-
-echo "=== Restarting Jenkins ==="
-sudo systemctl restart jenkins
-
-echo "=== Waiting for Jenkins to be ready... ==="
-until curl -s http://localhost:8080/login > /dev/null; do
-  echo "Waiting..."
-  sleep 5
-done
-
-echo "✅ Jenkins Groovy setup applied."
-EOF"
-
-sudo chmod +x /home/ubuntu/run-jenkins-groovy.sh
-sudo chmod +x /opt/jenkins-bootstrap/basic-setup.groovy
-
-echo "Jenkins setup script created at /home/ubuntu/run/run-jenkins-groovy.sh"
-echo "Jenkins Groovy config script created at /opt/jenkins-bootstrap/basic-setup.groovy"
-
-echo "Run the following command to apply the Jenkins Groovy config:"
-echo "sudo /home/ubuntu/run-jenkins-groovy.sh"
-
-ls -l /opt/jenkins-bootstrap/
-ls -l /home/ubuntu/run/
-echo "=== All setup scripts created successfully. ==="
